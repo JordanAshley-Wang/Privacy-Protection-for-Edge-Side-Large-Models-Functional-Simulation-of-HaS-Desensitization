@@ -517,5 +517,4 @@ UUID模式使用以下技术确保脱敏安全性：
 
 ## License
 
-[MIT License](https://opensource.org/licenses/MIT)#   P r i v a c y - P r o t e c t i o n - f o r - E d g e - S i d e - L a r g e - M o d e l s - F u n c t i o n a l - S i m u l a t i o n - o f - H a S - D e s e n s i t i z a t i o n  
- 
+[MIT License](https://opensource.org/licenses/MIT)#
