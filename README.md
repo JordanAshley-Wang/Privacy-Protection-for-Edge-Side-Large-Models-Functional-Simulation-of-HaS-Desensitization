@@ -429,7 +429,7 @@ llm_result = mock_llm(hidden_text)
 
 # 还原大模型输出
 restored_text = custom_model.restore(llm_result, mapping)
-
+```
 ## 技术细节
 
 ### 脱敏策略（Hide）
@@ -518,3 +518,4 @@ UUID模式使用以下技术确保脱敏安全性：
 ## License
 
 [MIT License](https://opensource.org/licenses/MIT)#
+
