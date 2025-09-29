@@ -49,6 +49,42 @@
 
 ## 项目结构
 
+本项目经过优化，保留了核心功能，删除了重复和不必要的文件。当前项目结构如下：
+
+```
+has_hide_seek/
+├── .gitignore           # Git忽略文件配置
+├── README.md            # 项目介绍文档
+├── README_ENHANCED.md   # 增强版工作流详细使用指南
+└── has_workflow_improved.py  # 核心实现文件，包含增强版HaS隐私保护技术
+```
+
+`has_workflow_improved.py` 是项目的核心实现文件，包含了所有敏感信息识别、脱敏和还原的功能。
+
+## 核心功能
+
+项目的核心功能都集中在 `has_workflow_improved.py` 文件中，主要包括：
+
+1. **EnhancedNamedEntityEndsideModel 类**：负责敏感信息识别、脱敏和还原
+   - 支持识别姓名、公司、职位、部门、金额、业绩、手机号、身份证号、邮箱等多种敏感信息
+   - 提供语义化占位符格式（如`<name>_0`）
+   - 实现智能还原策略，处理大模型输出变化
+   - 支持自定义敏感信息类型和处理规则
+
+2. **模拟大模型交互**：通过简单的模拟大模型展示完整的隐私保护工作流
+
+3. **用户交互界面**：提供命令行交互方式，支持自定义敏感信息类型选择
+
+## 使用方法
+
+要运行项目，只需执行以下命令：
+
+```bash
+python has_workflow_improved.py
+```
+
+按照提示输入文本和选择敏感信息类型，系统会自动执行脱敏处理、模拟大模型处理和敏感信息还原流程。
+
 ```
 has_hide_seek/
 ├── has_simulation.py           # HaS技术的核心模拟实现
@@ -517,5 +553,6 @@ UUID模式使用以下技术确保脱敏安全性：
 
 ## License
 
-[MIT License](https://opensource.org/licenses/MIT)#   P r i v a c y - P r o t e c t i o n - f o r - E d g e - S i d e - L a r g e - M o d e l s - F u n c t i o n a l - S i m u l a t i o n - o f - H a S - D e s e n s i t i z a t i o n  
+[MIT License](https://opensource.org/licenses/MIT)#   P r i v a c y - P r o t e c t i o n - f o r - E d g e - S i d e - L a r g e - M o d e l s - F u n c t i o n a l - S i m u l a t i o n - o f - H a S - D e s e n s i t i z a t i o n 
+ 
  
