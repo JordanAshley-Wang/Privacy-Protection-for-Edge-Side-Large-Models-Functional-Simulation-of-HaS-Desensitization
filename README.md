@@ -85,148 +85,194 @@ python has_workflow_improved.py
 
 按照提示输入文本和选择敏感信息类型，系统会自动执行脱敏处理、模拟大模型处理和敏感信息还原流程。
 
-```
-has_hide_seek/
-├── has_simulation.py           # HaS技术的核心模拟实现
-├── run_has820m.py              # 集成HaS-820m模型的完整流程演示
-├── test.py                     # 单元测试和实体替换演示
-├── endside_model_integration.py # 端侧小模型与大模型集成实现
-└── README.md                   # 项目说明文档
-```
-
-### 文件说明
-
-1. **has_simulation.py**：实现了`HideAndSeekSimulator`类，包含完整的脱敏（Hide）和还原（Seek）功能，可以识别和处理手机号、身份证号、邮箱和中文姓名等敏感信息。
-
-2. **run_has820m.py**：封装了HaS-820m模型的加载和使用，并展示了完整的隐私保护流程：脱敏 -> 调用大模型 -> 还原。
-
-3. **test.py**：包含单元测试用例，测试脱敏、还原等功能，并提供了实体替换功能的演示。
-
-4. **endside_model_integration.py**：实现了端侧小模型与大模型的集成框架，提供了完整的工作流封装、自定义敏感信息处理、以及多场景测试。
+这些文件已被整合到has_workflow_improved.py中，项目结构已优化。
 
 ## 安装依赖
 
 运行本项目需要安装以下Python库：
 
 ```bash
-pip install transformers torch
+pip install re time random
 ```
 
-## 使用指南
+## 快速开始
 
-### 基本用法
+### 基本演示
+
+运行增强版HaS隐私保护技术演示：
+
+```bash
+python has_workflow_improved.py
+```
+
+这将启动一个交互式界面，您可以输入文本并选择要脱敏的敏感信息类型，系统会自动执行脱敏处理、模拟大模型处理和敏感信息还原流程。
+
+### 使用流程
+
+1. 运行主脚本：`python has_workflow_improved.py`
+2. 按照提示输入您想处理的文本
+3. 选择要脱敏的敏感信息类型（如name,company,position）
+4. 查看脱敏后的文本、大模型处理结果和还原后的文本
+5. 选择是否继续处理新的文本
+
+项目的核心功能都集中在`has_workflow_improved.py`文件中，包括敏感信息识别、脱敏和还原的完整实现。
+
+### 代码集成示例
+
+如果您想在自己的项目中集成HaS隐私保护技术，可以参考以下示例：
 
 ```python
-from has_simulation import HideAndSeekSimulator
+from has_workflow_improved import EnhancedNamedEntityEndsideModel
 
-# 创建模拟器实例
-simulator = HideAndSeekSimulator(use_uuid=False, preserve_format=True)
+# 创建端侧小模型实例
+endside_model = EnhancedNamedEntityEndsideModel()
 
 # 输入文本
-text = "王小明的手机号是13812345678，身份证号为110101199003079876，邮箱是xiaoming@example.com"
+user_input = "我叫王通，来自中国移动业务部总经理，现在将开始我的述职报告"
 
-# 完整处理流程：脱敏 -> 调用大模型 -> 还原
-hidden_text, llm_output, restored_text = simulator.process(text)
+# 选择需要脱敏的敏感信息类型
+sensitive_types = ['name', 'company', 'position']
 
-print("原始文本:", text)
-print("脱敏后文本:", hidden_text)
+# 执行脱敏处理
+desensitized_text, mapping = endside_model.desensitize(user_input, sensitive_types)
+
+# 模拟大模型处理
+def mock_llm(input_text):
+    # 这里是您的大模型调用代码
+    return f"处理结果：{input_text}\n这是生成的内容。"
+
+llm_result = mock_llm(desensitized_text)
+
+# 执行还原处理
+restored_text = endside_model.restore(llm_result, mapping)
+
+print("原始文本:", user_input)
+print("脱敏后文本:", desensitized_text)
+print("大模型输出:", llm_result)
 print("还原后文本:", restored_text)
-```
-
-### 简化版函数调用
-
-```python
-from has_simulation import encode_sensitive, decode_sensitive
-
-# 脱敏处理
-encoded_text, code_map = encode_sensitive("王小明的手机号是13812345678")
-
-# 还原处理
-restored_text = decode_sensitive(encoded_text, code_map)
 ```
 
 ### 指定敏感信息类型
 
-```python
-# 只对手机号和身份证号进行脱敏
-specific_types = ["phone", "id"]
-encoded_text, code_map = encode_sensitive(text, specific_types)
+您可以根据需要选择要脱敏的敏感信息类型：
 
-# 或者使用高级参数控制
-encoded_text, code_map = simulator.hide_with_params(
-    text, 
-    include_types=["phone", "id"]  # 包含的类型
-    # exclude_types=["email", "name"]  # 排除的类型
-)
+```python
+# 只对姓名和公司进行脱敏
+sensitive_types = ["name", "company"]
+desensitized_text, mapping = endside_model.desensitize(user_input, sensitive_types)
+
+# 也可以使用逗号分隔的字符串
+sensitive_types = "name,company,position"
+desensitized_text, mapping = endside_model.desensitize(user_input, sensitive_types)
 ```
 
-### 使用UUID模式提高安全性
+### 配置选项
+
+端侧小模型支持多种配置选项：
 
 ```python
-# 创建使用UUID模式的模拟器
-uuid_simulator = HideAndSeekSimulator(use_uuid=True, preserve_format=False)
-
-# 执行脱敏
-encoded_text, code_map = uuid_simulator.hide(text)
+# 配置端侧小模型
+endside_model = EnhancedNamedEntityEndsideModel()
+endside_model.configure(
+    use_uuid=False,         # 是否使用UUID格式的占位符
+    preserve_format=True,   # 是否保留原始格式
+    enable_fuzzy_matching=True  # 是否启用模糊匹配还原
+)
 ```
 
 ### 自定义敏感信息类型
 
+您可以通过继承`EnhancedNamedEntityEndsideModel`类来实现自定义敏感信息处理逻辑：
+
 ```python
-# 定义自定义替换函数
-def custom_replace_ip(match):
-    original = match.group()
-    encoded = "***.***.***.***"
-    simulator.hide_map[original] = encoded
-    simulator.seek_map[encoded] = original
-    return encoded
+class CustomEndsideModel(EnhancedNamedEntityEndsideModel):
+    def __init__(self):
+        super().__init__()
+        # 添加自定义敏感信息类型
+        self.custom_patterns = {
+            "ip_address": r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)",
+            "password": r"password\s*[:=]\s*['\"]([^'"]+)['\"]"
+        }
+    
+    def encode_sensitive(self, text, sensitive_types=None):
+        # 如果没有指定敏感类型，使用默认类型加上自定义类型
+        if sensitive_types is None:
+            sensitive_types = self.default_sensitive_types + list(self.custom_patterns.keys())
+        
+        # 添加自定义模式到正则表达式映射
+        for type_name, pattern in self.custom_patterns.items():
+            if type_name in sensitive_types:
+                self.sensitive_patterns[type_name] = pattern
+        
+        # 调用父类方法进行脱敏
+        return super().encode_sensitive(text, sensitive_types)
 
-# 定义自定义模式
-custom_patterns = {
-    "ip_address": (r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)", custom_replace_ip)
-}
-
-# 使用自定义模式
-text_with_ip = "服务器IP地址是192.168.1.1，管理员邮箱是admin@example.com"
-custom_encoded, custom_map = simulator.hide_with_params(text_with_ip, custom_patterns=custom_patterns)
+# 使用自定义模型
+custom_model = CustomEndsideModel()
+text = "服务器IP地址是192.168.1.1，数据库密码是'admin123'"
+masked_text, mapping = custom_model.encode_sensitive(text)
+print("脱敏后：", masked_text)
 ```
 
 ### 处理大模型输出中的错误
 
+`EnhancedNamedEntityEndsideModel`类内置了模糊匹配还原功能，可以处理大模型输出中可能出现的小错误：
+
 ```python
+# 创建模型并启用模糊匹配
+model = EnhancedNamedEntityEndsideModel(enable_fuzzy_matching=True)
+
+# 示例文本
+text = "张敏的手机号是13812345678，身份证号为110101199001011234"
+
+# 脱敏处理
+masked_text, mapping = model.encode_sensitive(text)
+
 # 模拟大模型输出中的拼写错误
-llm_output_with_errors = "张敏的手机号是138****5678，身份号码为110101********9876"
+llm_output_with_errors = masked_text.replace("手机号是", "联系电话为")
 
 # 使用模糊匹配还原
-restored_with_fuzzy = simulator.seek_with_options(llm_output_with_errors, use_fuzzy_matching=True)
-```
-
-### 保存和加载映射关系
-
-```python
-# 保存映射关系
-simulator.save_mapping("mapping.json")
-
-# 加载映射关系
-new_simulator = HideAndSeekSimulator()
-new_simulator.load_mapping("mapping.json")
+restored_text = model.decode_sensitive(llm_output_with_errors, mapping)
+print("还原后：", restored_text)
 ```
 
 ### 批量处理
 
+您可以扩展`EnhancedNamedEntityEndsideModel`类来支持批量处理：
+
 ```python
+# 扩展模型以支持批量处理
+class BatchProcessingModel(EnhancedNamedEntityEndsideModel):
+    def batch_process(self, texts, mock_llm_func=None):
+        results = []
+        
+        for text in texts:
+            # 脱敏处理
+            masked_text, mapping = self.encode_sensitive(text)
+            
+            # 模拟大模型处理
+            if mock_llm_func:
+                llm_result = mock_llm_func(masked_text)
+            else:
+                # 默认的模拟大模型处理
+                llm_result = f"处理结果: {masked_text}\n这是生成的内容。"
+            
+            # 还原处理
+            restored_text = self.decode_sensitive(llm_result, mapping)
+            
+            results.append((masked_text, llm_result, restored_text))
+        
+        return results
+
+# 使用批量处理模型
+batch_model = BatchProcessingModel()
 texts = [
     "王小明的手机号是13812345678",
     "李华的邮箱是lihua@example.com",
     "张伟的身份证号是110101199001011234"
 ]
 
-# 定义模拟大模型函数
-def mock_llm(text):
-    return f"处理后的文本: {text}"
-
-# 批量处理
-results = simulator.batch_process(texts, mock_llm_func=mock_llm)
+results = batch_model.batch_process(texts)
 
 for i, (hidden, llm_out, restored) in enumerate(results):
     print(f"\n文本 {i+1}:")
@@ -237,56 +283,37 @@ for i, (hidden, llm_out, restored) in enumerate(results):
 
 ### 用户交互模式
 
-项目中的多个脚本支持用户交互模式，可以直接在命令行中手动输入需要脱敏的文本，或选择预设的输入模板：
-
-#### has_simulation.py
+运行主脚本即可进入用户交互模式：
 
 ```bash
-python has_simulation.py
+python has_workflow_improved.py
 ```
 
 运行后，您可以：
-- 选择预设的输入模板（个人信息、公司信息、交易信息）
 - 输入自定义文本进行脱敏处理
-- 选择是否使用UUID模式
-- 指定需要脱敏的敏感信息类型
+- 选择需要脱敏的敏感信息类型
 - 查看脱敏结果、模拟大模型输出和还原结果
+- 选择是否继续处理新的文本
 
-#### test_restore.py
+### 输入示例
 
-```bash
-python test_restore.py
-```
+以下是一些常用的输入示例，展示不同类型敏感信息的处理效果：
 
-运行后，您可以：
-- 选择预设的输入模板（场景1-银行卡信息、场景2-个人身份信息、场景3-交易信息、场景4-网络安全信息）
-- 输入数字1-4直接使用对应场景
-- 输入自定义文本进行脱敏处理
-- 选择脱敏模式（标准模式或UUID模式）
-- 查看脱敏结果、脱敏映射关系、模拟大模型输出和还原结果
-- 了解敏感信息的识别和还原情况
-
-### 输入模板样例
-
-以下是预设的输入模板样例：
-
-#### has_simulation.py 模板
-
-##### 1. 个人信息模板
+#### 个人信息示例
 ```
 王小明的手机号是13812345678，身份证号为110101199003079876，
 他的邮箱是xiaoming@example.com，银行卡号为6222 1234 5678 9012。
 他住在北京市朝阳区建国路88号，出生日期是1990/03/07。
 ```
 
-##### 2. 公司信息模板
+#### 公司信息示例
 ```
 北京科技有限公司的联系电话是13987654321，
 法定代表人是李华，公司地址在上海市浦东新区张江高科技园区博云路2号。
 公司邮箱是contact@beijingtech.com。
 ```
 
-##### 3. 交易信息模板
+#### 交易信息示例
 ```
 交易单号：TX202305160001，
 付款人：张伟，手机号：13712345678，
@@ -294,72 +321,32 @@ python test_restore.py
 交易金额：10000.00元，交易日期：2023-05-16。
 ```
 
-#### test_restore.py 模板
-
-##### 1. 场景1 - 银行卡信息
-```
-客户您好，您的尾号为1234的工商银行储蓄卡于2024年5月1日发生一笔转账交易，
-金额为5000元，对方账户为招商银行尾号4321，
-交易编号为PAY202405010001，如有疑问请联系客服热线400-123-4567。
-```
-
-##### 2. 场景2 - 个人身份信息
-```
-张先生（身份证号：110101199001011234）于2024年5月1日在我司申请办理信用卡，
-联系电话为13812345678，紧急联系人是李女士（13987654321），
-居住地址为北京市朝阳区建国路88号，工作单位为北京科技有限公司。
-```
-
-##### 3. 场景3 - 交易信息
-```
-交易单号为TX202405010001的付款方是张三，金额为10000元，
-收款方是李四，银行账户为6222020200012345678，交易时间为2024-05-01 10:30:45，
-交易状态为已完成，备注为项目经费。
-```
-
-##### 4. 场景4 - 网络安全信息
+#### 网络安全信息示例
 ```
 服务器IP地址是192.168.1.100，管理员账户为admin，密码为Admin12345，
-数据库连接字符串为jdbc:mysql://localhost:3306/userdb?user=root&password=Root12345，
-访问令牌为eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c。
+数据库连接字符串为jdbc:mysql://localhost:3306/userdb?user=root&password=Root12345。
 ```
 
 ### 完整流程演示
 
-运行`run_has820m.py`文件，体验完整的HaS隐私保护流程：
+所有的功能都已经整合到`has_workflow_improved.py`文件中，运行以下命令体验完整的HaS隐私保护流程：
 
 ```bash
-python run_has820m.py
+python has_workflow_improved.py
 ```
 
 这个脚本会展示：
 - 原始文本（包含隐私信息）
 - 脱敏后文本
 - 脱敏映射关系
-- 大模型处理结果
+- 模拟大模型处理结果
 - 还原后文本
 
-如果无法下载HaS-820m模型，脚本会自动使用模拟的大模型函数进行演示。
-
-### 运行单元测试
-
-```bash
-python test.py test
-```
-
-### 实体替换演示
-
-```bash
-python test.py
-```
-
-这将演示模拟的HaS-820m模型的实体替换效果。
-
-## 端侧小模型与大模型集成
+### 端侧小模型与大模型集成
 
 ### 集成架构
 
-端侧小模型与大模型集成实现了一个完整的隐私保护工作流，主要包含以下组件：
+`has_workflow_improved.py`实现了一个完整的隐私保护工作流，主要包含以下组件：
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
@@ -376,7 +363,7 @@ python test.py
 
 ### 核心功能
 
-1. **端侧小模型封装**：提供了完整的端侧小模型封装，负责敏感信息的本地处理
+1. **端侧小模型封装**：通过`EnhancedNamedEntityEndsideModel`类提供了完整的端侧小模型封装，负责敏感信息的本地处理
 
 2. **模拟大模型**：内置了模拟大模型函数，用于测试整个集成流程
 
@@ -391,10 +378,10 @@ python test.py
 运行端侧小模型与大模型集成演示：
 
 ```bash
-python endside_model_integration.py
+python has_workflow_improved.py
 ```
 
-这将自动运行所有测试场景，并展示每个场景的原始输入、脱敏结果和还原结果。
+这将启动交互式界面，您可以输入文本并查看脱敏、大模型处理和还原的完整流程。
 
 ### 测试场景
 
@@ -465,7 +452,7 @@ llm_result = mock_llm(hidden_text)
 
 # 还原大模型输出
 restored_text = custom_model.restore(llm_result, mapping)
-
+```
 ## 技术细节
 
 ### 脱敏策略（Hide）
@@ -553,6 +540,4 @@ UUID模式使用以下技术确保脱敏安全性：
 
 ## License
 
-[MIT License](https://opensource.org/licenses/MIT)#   P r i v a c y - P r o t e c t i o n - f o r - E d g e - S i d e - L a r g e - M o d e l s - F u n c t i o n a l - S i m u l a t i o n - o f - H a S - D e s e n s i t i z a t i o n 
- 
- 
+[MIT License](https://opensource.org/licenses/MIT)

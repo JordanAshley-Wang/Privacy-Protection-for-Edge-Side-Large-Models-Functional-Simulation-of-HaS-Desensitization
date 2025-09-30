@@ -53,13 +53,12 @@
 - re (标准库)
 - time (标准库)
 - random (标准库)
-- has_simulation.py (项目内部模块)
 
 安装步骤：
 
 1. 确保已安装Python 3.7或更高版本
 2. 克隆或下载项目代码
-3. 确保项目目录中包含has_simulation.py文件
+3. 确保项目目录中包含has_workflow_improved.py文件
 
 ## 使用方法
 
@@ -68,7 +67,7 @@
 运行增强版工作流演示脚本：
 
 ```bash
-python has_workflow_demo.py
+python has_workflow_improved.py
 ```
 
 运行后，您将看到交互式菜单，可以选择：
@@ -193,7 +192,7 @@ final_response = result['final_response']
 可以将本工作流集成到实际应用系统中，为用户提供隐私保护服务：
 
 ```python
-from has_workflow_demo import CompleteHaSWorkflow
+from has_workflow_improved import CompleteHaSWorkflow
 
 class PrivacyProtectedChatbot:
     def __init__(self):
@@ -222,7 +221,7 @@ print(response)
 对于需要批量处理的敏感文本，可以使用工作流的批量处理功能：
 
 ```python
-from has_workflow_demo import CompleteHaSWorkflow
+from has_workflow_improved import CompleteHaSWorkflow
 
 # 准备批量文本
 texts_to_process = [
@@ -284,8 +283,8 @@ workflow.configure_endside_model(
 
 您可以将本工作流作为一个组件集成到实际系统中：
 
-1. 将has_workflow_demo.py文件添加到您的项目中
-2. 确保项目中包含has_simulation.py文件
+1. 将has_workflow_improved.py文件添加到您的项目中
+2. 确保项目中包含所需的依赖项
 3. 在您的代码中导入并使用CompleteHaSWorkflow类
 4. 根据实际需求配置工作流参数
 
