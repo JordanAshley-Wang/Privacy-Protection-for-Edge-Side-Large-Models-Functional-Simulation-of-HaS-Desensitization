@@ -1,6 +1,8 @@
 import time
 import re
-from typing import Dict, Tuple, Optional, List
+import random
+import uuid
+from typing import Dict, Tuple, Optional, List, Any
 
 class EnhancedNamedEntityEndsideModel:
     """
@@ -19,8 +21,17 @@ class EnhancedNamedEntityEndsideModel:
             'enable_fuzzy_matching': True,     # 是否启用模糊匹配还原
             'min_confidence': 0.7,             # 模糊匹配的最小置信度
             'max_distance': 3,                 # 允许的最大字符差异
-            'custom_patterns': None            # 自定义敏感信息模式
+            'custom_patterns': None,           # 自定义敏感信息模式
+            'enable_pseudonymization': False,  # 是否启用假名化
+            'enable_anonimization': False,     # 是否启用匿名化
+            'enable_generalization': True      # 是否启用数据泛化（降低粒度）
         }
+        # 存储假名映射关系（用于假名化）
+        self.pseudonym_map = {}
+        # 存储匿名化映射关系
+        self.anonymization_map = {}
+        # 存储数据泛化映射关系
+        self.generalization_map = {}
         # 定义敏感信息类型和对应的正则表达式
         self.sensitive_patterns = {
             'name': {
@@ -70,6 +81,31 @@ class EnhancedNamedEntityEndsideModel:
                 'pattern': r'(业务部|财务部|技术部|人力资源部|市场部|销售部|研发部|客服部|运营部|行政部|合规部|风险管理部|投资银行部|资产管理部|自营资产部)',
                 'description': '部门',
                 'placeholder': '<department>'
+            },
+            'age': {
+                'pattern': r'(\d{1,3})\s*岁',
+                'description': '年龄',
+                'placeholder': '<age>'
+            },
+            'address': {
+                'pattern': r'(?:居住在|住在|地址是)?([\u4e00-\u9fa5]+省[\u4e00-\u9fa5]+市[\u4e00-\u9fa5]+区[\u4e00-\u9fa5]*路[\d]+号)',
+                'description': '详细地址',
+                'placeholder': '<address>'
+            },
+            'zipcode': {
+                'pattern': r'(邮政编码|邮编)[:：]?\s*(\d{6})',
+                'description': '邮政编码',
+                'placeholder': '<zipcode>'
+            },
+            'ip': {
+                'pattern': r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b',
+                'description': 'IP地址',
+                'placeholder': '<ip>'
+            },
+            'account': {
+                'pattern': r'(账号|账户|用户名)[：:]?\s*([a-zA-Z0-9_]{4,20})',
+                'description': '账号/用户名',
+                'placeholder': '<account>'
             }
         }
         # 预编译正则表达式以提高性能
@@ -92,6 +128,130 @@ class EnhancedNamedEntityEndsideModel:
             if key in self.config:
                 self.config[key] = value
         return self
+        
+    def _generalize_age(self, age: str) -> str:
+        """
+        对年龄进行数据泛化（降低粒度）
+        
+        参数:
+        age: 具体年龄字符串
+        
+        返回:
+        str: 泛化后的年龄段
+        """
+        try:
+            age_num = int(age)
+            if age_num < 18:
+                return '未成年人'
+            elif 18 <= age_num < 30:
+                return '18-29岁'
+            elif 30 <= age_num < 40:
+                return '30-39岁'
+            elif 40 <= age_num < 50:
+                return '40-49岁'
+            elif 50 <= age_num < 60:
+                return '50-59岁'
+            else:
+                return '60岁以上'
+        except:
+            return age
+            
+    def _generalize_address(self, address: str) -> str:
+        """
+        对地址进行数据泛化（降低粒度）
+        
+        参数:
+        address: 详细地址字符串
+        
+        返回:
+        str: 泛化后的地址（只保留省、市）
+        """
+        # 提取省和市的信息
+        province_pattern = r'([\u4e00-\u9fa5]+省)'
+        city_pattern = r'([\u4e00-\u9fa5]+市)'
+        
+        province_match = re.search(province_pattern, address)
+        city_match = re.search(city_pattern, address)
+        
+        province = province_match.group(1) if province_match else ''
+        city = city_match.group(1) if city_match else ''
+        
+        return f'{province}{city}'
+        
+    def _generalize_zipcode(self, zipcode: str) -> str:
+        """
+        对邮政编码进行数据泛化（降低粒度）
+        
+        参数:
+        zipcode: 完整邮政编码
+        
+        返回:
+        str: 泛化后的邮政编码（只保留前两位）
+        """
+        return zipcode[:2] + '0000'
+        
+    def _pseudonymize(self, sensitive_type: str, original_text: str) -> str:
+        """
+        对敏感信息进行假名化处理
+        
+        参数:
+        sensitive_type: 敏感信息类型
+        original_text: 原始敏感信息文本
+        
+        返回:
+        str: 假名化后的信息
+        """
+        # 检查是否已经为该原始文本生成过假名
+        if original_text in self.pseudonym_map:
+            return self.pseudonym_map[original_text]
+        
+        # 根据不同类型生成不同格式的假名
+        if sensitive_type == 'name':
+            # 生成随机姓名
+            family_names = ['张', '王', '李', '赵', '刘', '陈', '杨', '黄']
+            given_names = ['明', '华', '强', '伟', '丽', '静', '敏', '磊']
+            pseudonym = random.choice(family_names) + random.choice(given_names)
+            # 对于双字名，可以再加一个字
+            if random.random() > 0.5:
+                pseudonym += random.choice(given_names)
+        elif sensitive_type == 'company':
+            # 生成随机公司名
+            prefixes = ['诚信', '创新', '科技', '发展', '未来', '远大', '东方']
+            suffixes = ['科技有限公司', '贸易有限公司', '集团股份有限公司', '信息技术有限公司']
+            pseudonym = random.choice(prefixes) + random.choice(suffixes)
+        elif sensitive_type == 'phone':
+            # 生成随机手机号
+            pseudonym = '1' + str(random.randint(3, 9)) + ''.join([str(random.randint(0, 9)) for _ in range(9)])
+        else:
+            # 其他类型使用UUID生成唯一标识符
+            pseudonym = f"{sensitive_type}_{uuid.uuid4().hex[:6]}"
+        
+        # 保存映射关系
+        self.pseudonym_map[original_text] = pseudonym
+        self.pseudonym_map[pseudonym] = original_text
+        
+        return pseudonym
+        
+    def _anonymize(self, sensitive_type: str, original_text: str) -> str:
+        """
+        对敏感信息进行匿名化处理
+        
+        参数:
+        sensitive_type: 敏感信息类型
+        original_text: 原始敏感信息文本
+        
+        返回:
+        str: 匿名化后的信息（如[REDACTED_NAME]）
+        """
+        # 生成匿名化标签
+        anonymized_label = f"[REDACTED_{sensitive_type.upper()}]"
+        
+        # 保存映射关系
+        unique_id = f"{sensitive_type}_{len(self.anonymization_map)}"
+        self.anonymization_map[unique_id] = original_text
+        self.anonymization_map[original_text] = unique_id
+        
+        return anonymized_label
 
     def desensitize(self, user_input: str, sensitive_types: Optional[List[str]] = None):
         """
@@ -140,7 +300,7 @@ class EnhancedNamedEntityEndsideModel:
         entity_count = 0
         
         # 按照优先级排序处理，避免嵌套匹配问题
-        priority_order = ['company', 'department', 'position', 'performance', 'amount', 'email', 'phone', 'id', 'name']
+        priority_order = ['company', 'department', 'position', 'performance', 'amount', 'email', 'phone', 'id', 'name', 'age', 'address', 'zipcode', 'ip', 'account']
         processing_order = [t for t in priority_order if t in valid_types] + [t for t in valid_types if t not in priority_order]
         
         # 用于记录已处理的位置，避免重复脱敏
@@ -174,18 +334,43 @@ class EnhancedNamedEntityEndsideModel:
                     else:
                         original_text = match.group()
                     
-                    # 生成唯一的占位符ID
-                    unique_id = f"{placeholder}_{entity_count}"
-                    entity_count += 1
+                    # 根据配置选择脱敏策略
+                    if self.config['enable_pseudonymization']:
+                        # 假名化处理
+                        replacement = self._pseudonymize(type_name, original_text)
+                    elif self.config['enable_anonimization']:
+                        # 匿名化处理
+                        replacement = self._anonymize(type_name, original_text)
+                    elif self.config['enable_generalization']:
+                        # 数据泛化处理（降低粒度）
+                        if type_name == 'age':
+                            replacement = self._generalize_age(original_text)
+                        elif type_name == 'address':
+                            replacement = self._generalize_address(original_text)
+                        elif type_name == 'zipcode':
+                            replacement = self._generalize_zipcode(original_text)
+                        else:
+                            # 其他类型使用标准占位符
+                            unique_id = f"{placeholder}_{entity_count}"
+                            entity_count += 1
+                            replacement = unique_id
+                    else:
+                        # 标准占位符处理
+                        unique_id = f"{placeholder}_{entity_count}"
+                        entity_count += 1
+                        replacement = unique_id
                     
                     # 保存映射关系
-                    self.current_mapping[unique_id] = original_text
+                    if not (self.config['enable_pseudonymization'] or self.config['enable_anonimization']):
+                        # 对于假名化和匿名化，映射关系已经在对应的方法中保存
+                        unique_id = f"{placeholder}_{entity_count - 1}"
+                        self.current_mapping[unique_id] = original_text
                     
                     # 替换原文中的敏感信息
-                    desensitized_text = desensitized_text[:start] + unique_id + desensitized_text[end:]
+                    desensitized_text = desensitized_text[:start] + replacement + desensitized_text[end:]
                     
                     # 更新已处理的位置（注意：替换后文本长度可能变化，需要重新计算位置）
-                    new_end = start + len(unique_id)
+                    new_end = start + len(replacement)
                     processed_positions.append((start, new_end))
                     
                     # 由于文本长度发生变化，需要重新计算后续匹配位置，这里采用简单策略：重新编译并查找
@@ -205,13 +390,42 @@ class EnhancedNamedEntityEndsideModel:
                     
                     if not overlap:
                         original_text = match.group()
-                        unique_id = f"{placeholder}_{entity_count}"
-                        entity_count += 1
                         
-                        self.current_mapping[unique_id] = original_text
-                        desensitized_text = desensitized_text[:start] + unique_id + desensitized_text[end:]
+                        # 根据配置选择脱敏策略
+                        if self.config['enable_pseudonymization']:
+                            # 假名化处理
+                            replacement = self._pseudonymize(type_name, original_text)
+                        elif self.config['enable_anonimization']:
+                            # 匿名化处理
+                            replacement = self._anonymize(type_name, original_text)
+                        elif self.config['enable_generalization']:
+                            # 数据泛化处理（降低粒度）
+                            if type_name == 'age':
+                                replacement = self._generalize_age(original_text)
+                            elif type_name == 'address':
+                                replacement = self._generalize_address(original_text)
+                            elif type_name == 'zipcode':
+                                replacement = self._generalize_zipcode(original_text)
+                            else:
+                                # 其他类型使用标准占位符
+                                unique_id = f"{placeholder}_{entity_count}"
+                                entity_count += 1
+                                replacement = unique_id
+                        else:
+                            # 标准占位符处理
+                            unique_id = f"{placeholder}_{entity_count}"
+                            entity_count += 1
+                            replacement = unique_id
                         
-                        new_end = start + len(unique_id)
+                        # 保存映射关系
+                        if not (self.config['enable_pseudonymization'] or self.config['enable_anonimization']):
+                            # 对于假名化和匿名化，映射关系已经在对应的方法中保存
+                            unique_id = f"{placeholder}_{entity_count - 1}"
+                            self.current_mapping[unique_id] = original_text
+                        
+                        desensitized_text = desensitized_text[:start] + replacement + desensitized_text[end:]
+                        
+                        new_end = start + len(replacement)
                         processed_positions.append((start, new_end))
                         found = True
                         break
@@ -243,10 +457,26 @@ class EnhancedNamedEntityEndsideModel:
         # 执行还原操作
         restored_text = processed_response
         
-        # 按照占位符长度从长到短排序，避免部分匹配
-        for placeholder_id, original_text in sorted(self.current_mapping.items(), key=lambda x: len(x[0]), reverse=True):
-            # 替换占位符为原始文本
-            restored_text = restored_text.replace(placeholder_id, original_text)
+        # 根据不同的脱敏策略执行还原
+        if self.config['enable_pseudonymization']:
+            # 处理假名化的还原
+            for pseudonym, original_text in self.pseudonym_map.items():
+                # 只处理假名到原始文本的映射
+                if not pseudonym.startswith('<') and pseudonym != original_text:
+                    restored_text = restored_text.replace(pseudonym, original_text)
+        elif self.config['enable_anonimization']:
+            # 处理匿名化的还原
+            for anonymized_label in re.findall(r'\[REDACTED_\w+\]', restored_text):
+                # 在匿名化映射中查找对应的原始文本
+                for key, value in self.anonymization_map.items():
+                    if key != value and isinstance(value, str) and anonymized_label in value:
+                        restored_text = restored_text.replace(anonymized_label, key)
+        else:
+            # 处理标准占位符的还原
+            # 按照占位符长度从长到短排序，避免部分匹配
+            for placeholder_id, original_text in sorted(self.current_mapping.items(), key=lambda x: len(x[0]), reverse=True):
+                # 替换占位符为原始文本
+                restored_text = restored_text.replace(placeholder_id, original_text)
         
         # 对还原结果进行后处理，提高文本质量
         final_text = self._postprocess_restored_text(restored_text)
@@ -445,12 +675,42 @@ class CompleteHaSWorkflow:
         配置端侧小模型的参数
         
         参数:
-        **kwargs: 配置参数
+        **kwargs: 配置参数，包括enable_entity_placeholder, enable_pseudonymization, enable_anonimization, enable_generalization等
         
         返回:
         self: 当前工作流实例，支持链式调用
         """
         self.endside_model.configure(**kwargs)
+        return self
+    
+    def configure_desensitization_strategy(self, 
+                                enable_entity_placeholder=None, 
+                                enable_pseudonymization=None, 
+                                enable_anonimization=None, 
+                                enable_generalization=None):
+        """
+        配置端侧模型的脱敏策略选项
+        
+        参数:
+        enable_entity_placeholder: 是否使用标准占位符（<name>_0格式）
+        enable_pseudonymization: 是否使用假名化策略
+        enable_anonimization: 是否使用匿名化策略
+        enable_generalization: 是否使用数据泛化策略
+        
+        返回:
+        self: 当前工作流实例，支持链式调用
+        """
+        config_kwargs = {}
+        if enable_entity_placeholder is not None:
+            config_kwargs['enable_entity_placeholder'] = enable_entity_placeholder
+        if enable_pseudonymization is not None:
+            config_kwargs['enable_pseudonymization'] = enable_pseudonymization
+        if enable_anonimization is not None:
+            config_kwargs['enable_anonimization'] = enable_anonimization
+        if enable_generalization is not None:
+            config_kwargs['enable_generalization'] = enable_generalization
+        
+        self.endside_model.configure(**config_kwargs)
         return self
 
     def run(self, user_input: str, sensitive_types: Optional[List[str]] = None):
@@ -554,15 +814,20 @@ def user_interaction_demo():
     print("再将大模型的输出结果中的敏感信息还原，确保用户隐私安全。")
     print("提示：输入 'exit' 或 '退出' 结束程序。\n")
     
+    # 存储会话映射关系，用于独立的还原操作
+    session_mappings = {}
+    
     while True:
         try:
             # 显示菜单
             print("请选择操作：")
             print("1. 使用预设场景进行演示")
             print("2. 输入自定义文本进行演示")
-            print("3. 退出程序")
+            print("3. 第一步：输入文本进行脱敏（生成可复制的脱敏文本）")
+            print("4. 第二步：输入大模型回答进行还原（使用之前的脱敏映射）")
+            print("5. 退出程序")
             
-            choice = input("请选择 (1-3): ").strip()
+            choice = input("请选择 (1-5): ").strip()
             
             if choice == '1':
                 # 预设场景演示
@@ -577,6 +842,48 @@ def user_interaction_demo():
                     
                     # 创建工作流实例
                     has_workflow = CompleteHaSWorkflow()
+                    
+                    # 询问用户是否需要指定脱敏策略
+                    specify_strategy = input("是否需要指定脱敏策略？(y/n，默认n)：").strip().lower() == 'y'
+                    
+                    if specify_strategy:
+                        print("请选择脱敏策略：")
+                        print("1. 标准占位符（<name>_0）")
+                        print("2. 假名化（生成逼真的替代信息）")
+                        print("3. 匿名化（[REDACTED_NAME]）")
+                        print("4. 数据泛化（降低数据粒度，如年龄转年龄段）")
+                        
+                        strategy_choice = input("请选择策略 (1-4)：").strip()
+                        
+                        if strategy_choice == '1':
+                            # 标准占位符策略
+                            has_workflow.configure_desensitization_strategy(
+                                enable_entity_placeholder=True,
+                                enable_pseudonymization=False,
+                                enable_anonimization=False,
+                                enable_generalization=False
+                            )
+                        elif strategy_choice == '2':
+                            # 假名化策略
+                            has_workflow.configure_desensitization_strategy(
+                                enable_pseudonymization=True,
+                                enable_anonimization=False,
+                                enable_generalization=False
+                            )
+                        elif strategy_choice == '3':
+                            # 匿名化策略
+                            has_workflow.configure_desensitization_strategy(
+                                enable_pseudonymization=False,
+                                enable_anonimization=True,
+                                enable_generalization=False
+                            )
+                        elif strategy_choice == '4':
+                            # 数据泛化策略
+                            has_workflow.configure_desensitization_strategy(
+                                enable_pseudonymization=False,
+                                enable_anonimization=False,
+                                enable_generalization=True
+                            )
                     
                     # 运行工作流
                     has_workflow.run(
@@ -597,6 +904,48 @@ def user_interaction_demo():
                 # 创建工作流实例
                 has_workflow = CompleteHaSWorkflow()
                 
+                # 询问用户是否需要指定脱敏策略
+                specify_strategy = input("是否需要指定脱敏策略？(y/n，默认n)：").strip().lower() == 'y'
+                
+                if specify_strategy:
+                    print("请选择脱敏策略：")
+                    print("1. 标准占位符（<name>_0）")
+                    print("2. 假名化（生成逼真的替代信息）")
+                    print("3. 匿名化（[REDACTED_NAME]）")
+                    print("4. 数据泛化（降低数据粒度，如年龄转年龄段）")
+                    
+                    strategy_choice = input("请选择策略 (1-4)：").strip()
+                    
+                    if strategy_choice == '1':
+                        # 标准占位符策略
+                        has_workflow.configure_desensitization_strategy(
+                            enable_entity_placeholder=True,
+                            enable_pseudonymization=False,
+                            enable_anonimization=False,
+                            enable_generalization=False
+                        )
+                    elif strategy_choice == '2':
+                        # 假名化策略
+                        has_workflow.configure_desensitization_strategy(
+                            enable_pseudonymization=True,
+                            enable_anonimization=False,
+                            enable_generalization=False
+                        )
+                    elif strategy_choice == '3':
+                        # 匿名化策略
+                        has_workflow.configure_desensitization_strategy(
+                            enable_pseudonymization=False,
+                            enable_anonimization=True,
+                            enable_generalization=False
+                        )
+                    elif strategy_choice == '4':
+                        # 数据泛化策略
+                        has_workflow.configure_desensitization_strategy(
+                            enable_pseudonymization=False,
+                            enable_anonimization=False,
+                            enable_generalization=True
+                        )
+                
                 # 询问用户是否需要指定脱敏类型
                 specify_types = input("是否需要指定脱敏的信息类型？(y/n，默认n)：").strip().lower() == 'y'
                 
@@ -604,7 +953,8 @@ def user_interaction_demo():
                     print("请选择需要脱敏的信息类型（多个类型用逗号分隔，如 name,company,position）：")
                     print("支持的类型：name(姓名), company(公司), position(职位), department(部门),")
                     print("phone(手机号), id(身份证), email(邮箱), bank_card(银行卡),")
-                    print("amount(金额), performance(业绩指标)")
+                    print("amount(金额), performance(业绩指标), age(年龄), address(地址),")
+                    print("zipcode(邮政编码), ip(IP地址), account(账号)")
                     
                     types_input = input("请输入类型：").strip().lower()
                     sensitive_types = [t.strip() for t in types_input.split(',') if t.strip()]
@@ -613,7 +963,152 @@ def user_interaction_demo():
                 
                 # 运行工作流
                 has_workflow.run(custom_text, sensitive_types)
-            elif choice in ['3', 'exit', '退出']:
+            elif choice == '3':
+                # 仅进行脱敏处理
+                print("\n===== 仅脱敏处理模式 =====")
+                print("此模式适用于实际使用场景：")
+                print("1. 在内网电脑上输入包含敏感信息的文本")
+                print("2. 系统对文本进行脱敏处理")
+                print("3. 用户将脱敏后的文本复制到外网使用大模型")
+                print("4. 保存脱敏映射关系，用于后续还原操作")
+                
+                custom_text = input("\n请输入您需要脱敏的文本：").strip()
+                if not custom_text:
+                    print("输入不能为空，请重新输入。\n")
+                    continue
+                
+                # 创建工作流实例
+                has_workflow = CompleteHaSWorkflow()
+                
+                # 询问用户是否需要指定脱敏策略
+                specify_strategy = input("是否需要指定脱敏策略？(y/n，默认n)：").strip().lower() == 'y'
+                
+                if specify_strategy:
+                    print("请选择脱敏策略：")
+                    print("1. 标准占位符（<name>_0）")
+                    print("2. 假名化（生成逼真的替代信息）")
+                    print("3. 匿名化（[REDACTED_NAME]）")
+                    print("4. 数据泛化（降低数据粒度，如年龄转年龄段）")
+                    
+                    strategy_choice = input("请选择策略 (1-4)：").strip()
+                    
+                    if strategy_choice == '1':
+                        # 标准占位符策略
+                        has_workflow.configure_desensitization_strategy(
+                            enable_entity_placeholder=True,
+                            enable_pseudonymization=False,
+                            enable_anonimization=False,
+                            enable_generalization=False
+                        )
+                    elif strategy_choice == '2':
+                        # 假名化策略
+                        has_workflow.configure_desensitization_strategy(
+                            enable_pseudonymization=True,
+                            enable_anonimization=False,
+                            enable_generalization=False
+                        )
+                    elif strategy_choice == '3':
+                        # 匿名化策略
+                        has_workflow.configure_desensitization_strategy(
+                            enable_pseudonymization=False,
+                            enable_anonimization=True,
+                            enable_generalization=False
+                        )
+                    elif strategy_choice == '4':
+                        # 数据泛化策略
+                        has_workflow.configure_desensitization_strategy(
+                            enable_pseudonymization=False,
+                            enable_anonimization=False,
+                            enable_generalization=True
+                        )
+                
+                # 询问用户是否需要指定脱敏类型
+                specify_types = input("是否需要指定脱敏的信息类型？(y/n，默认n)：").strip().lower() == 'y'
+                
+                if specify_types:
+                    print("请选择需要脱敏的信息类型（多个类型用逗号分隔，如 name,company,position）：")
+                    print("支持的类型：name(姓名), company(公司), position(职位), department(部门),")
+                    print("phone(手机号), id(身份证), email(邮箱), bank_card(银行卡),")
+                    print("amount(金额), performance(业绩指标), age(年龄), address(地址),")
+                    print("zipcode(邮政编码), ip(IP地址), account(账号)")
+                    
+                    types_input = input("请输入类型：").strip().lower()
+                    sensitive_types = [t.strip() for t in types_input.split(',') if t.strip()]
+                else:
+                    sensitive_types = None  # 使用默认类型
+                
+                # 执行脱敏处理
+                print(f"\n===== 脱敏处理开始 =====")
+                print(f"用户原始输入: {custom_text}")
+                
+                # 仅执行脱敏处理，不调用模拟大模型
+                desensitized_text, mapping = has_workflow.endside_model.desensitize(custom_text, sensitive_types)
+                
+                # 保存映射关系到会话字典
+                session_id = has_workflow.endside_model.session_id
+                session_mappings[session_id] = {
+                    'mapping': mapping,
+                    'pseudonym_map': has_workflow.endside_model.pseudonym_map,
+                    'anonymization_map': has_workflow.endside_model.anonymization_map,
+                    'config': has_workflow.endside_model.config
+                }
+                
+                print(f"脱敏后文本: {desensitized_text}")
+                print(f"脱敏映射关系已保存，会话ID: {session_id}")
+                print("\n请复制上面的脱敏后文本，在外部大模型中使用。")
+                print("提示：请记下会话ID，后续还原时需要使用。")
+                print("===== 脱敏处理完成 =====")
+                
+            elif choice == '4':
+                # 仅进行还原处理
+                print("\n===== 仅还原处理模式 =====")
+                print("此模式适用于实际使用场景：")
+                print("1. 用户已在外网大模型中使用脱敏文本")
+                print("2. 将大模型生成的文本输入到此模式")
+                print("3. 系统根据之前保存的映射关系还原敏感信息")
+                
+                # 检查是否有可用的会话映射
+                if not session_mappings:
+                    print("错误：未找到任何保存的脱敏映射关系。")
+                    print("请先使用'仅进行脱敏处理'功能生成映射关系。")
+                    continue
+                
+                # 显示可用的会话ID
+                print("可用的会话ID列表：")
+                for session_id in session_mappings.keys():
+                    print(f"- {session_id}")
+                
+                session_id = input("请输入用于还原的会话ID：").strip()
+                
+                if session_id not in session_mappings:
+                    print(f"错误：未找到会话ID '{session_id}' 的映射关系。")
+                    continue
+                
+                # 获取映射关系
+                session_data = session_mappings[session_id]
+                
+                # 创建新的端侧模型实例
+                restore_model = EnhancedNamedEntityEndsideModel()
+                restore_model.session_id = session_id
+                restore_model.current_mapping = session_data['mapping']
+                restore_model.pseudonym_map = session_data['pseudonym_map']
+                restore_model.anonymization_map = session_data['anonymization_map']
+                restore_model.config = session_data['config']
+                
+                # 获取大模型生成的文本
+                llm_text = input("请输入大模型生成的文本：").strip()
+                if not llm_text:
+                    print("输入不能为空，请重新输入。\n")
+                    continue
+                
+                # 执行还原处理
+                print(f"\n===== 还原处理开始 =====")
+                restored_text = restore_model.restore(llm_text)
+                
+                print(f"还原后的文本: {restored_text}")
+                print("===== 还原处理完成 =====")
+                
+            elif choice in ['5', 'exit', '退出']:
                 print("感谢使用HaS隐私保护工作流演示，再见！")
                 break
             else:
@@ -621,10 +1116,12 @@ def user_interaction_demo():
                 continue
             
             # 询问用户是否继续
-            continue_choice = input("\n是否继续？(y/n，默认y)：").strip().lower()
-            if continue_choice != 'y':
-                print("感谢使用HaS隐私保护工作流演示，再见！")
-                break
+            # 仅在1、2选项中询问是否继续
+            if choice in ['1', '2']:
+                continue_choice = input("\n是否继续？(y/n，默认y)：").strip().lower()
+                if continue_choice != 'y':
+                    print("感谢使用HaS隐私保护工作流演示，再见！")
+                    break
             
             print("\n" + "="*80 + "\n")
             
