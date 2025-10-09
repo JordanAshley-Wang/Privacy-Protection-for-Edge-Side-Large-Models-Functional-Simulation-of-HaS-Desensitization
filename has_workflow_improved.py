@@ -2,7 +2,7 @@ import time
 import re
 import random
 import uuid
-from typing import Dict, Tuple, Optional, List, Any
+from typing import Dict, Tuple, Optional, List, Any, cast
 
 class EnhancedNamedEntityEndsideModel:
     """
@@ -14,6 +14,8 @@ class EnhancedNamedEntityEndsideModel:
         self.current_mapping = {}
         # 存储会话ID，用于标识不同的用户会话
         self.session_id = self._generate_session_id()
+        # 最近一次用户原始输入（用于上下文与类型检查友好）
+        self.last_user_input = ""
         # 配置选项
         self.config = {
             'enable_entity_placeholder': True,  # 使用实体占位符格式
@@ -24,7 +26,11 @@ class EnhancedNamedEntityEndsideModel:
             'custom_patterns': None,           # 自定义敏感信息模式
             'enable_pseudonymization': False,  # 是否启用假名化
             'enable_anonimization': False,     # 是否启用匿名化
-            'enable_generalization': True      # 是否启用数据泛化（降低粒度）
+            'enable_generalization': True,     # 是否启用数据泛化（降低粒度）
+            # 信息熵辅助检索
+            'enable_entropy_detection': True,  # 启用信息熵/启发式候选召回
+            'entropy_threshold': 1.2,          # 字符熵阈值（用于区分结构化/非结构化片段，经验值）
+            'max_token_len': 32                # 最大候选token长度
         }
         # 存储假名映射关系（用于假名化）
         self.pseudonym_map = {}
@@ -112,10 +118,113 @@ class EnhancedNamedEntityEndsideModel:
         self.compiled_patterns = {}
         for key, value in self.sensitive_patterns.items():
             self.compiled_patterns[key] = re.compile(value['pattern'])
+        # 常见中文姓氏与少量停用词（轻量、内置）
+        self.common_surnames = set(list("赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻柏水窦章云苏潘葛范彭郎鲁韦昌马苗凤花方俞任袁柳唐罗薛伍余元卜顾孟平黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯昝管卢莫经房裘缪干解应宗丁宣贲邓郁单杭洪包诸左石崔吉龚程邢裴陆荣翁荀羊於惠甄麴家封芮羿储靳汲邴糜松井段富巫乌焦巴弓牧隗山谷车侯伊宁仇甘斜厉戎祖武符刘景詹束龙叶幸司韶郜黎蓟薄印宿白怀蒲台从鄂索咸籍赖卓蔺屠蒙池乔阴欎胥能苍双闻莘党翟谭贡劳逄姬申扶堵冉宰郦雍郤璩桑桂濮牛寿通边扈燕冀郏浦咸籍") )
+        self.minor_stopwords = set(["先生","女士","小姐","同志","用户","客户","朋友","同学","同事","老师"])
 
     def _generate_session_id(self):
         """生成唯一的会话ID"""
         return f"session_{int(time.time())}_{int(time.time() * 1000) % 10000}"
+
+    # ============ 信息熵/启发式辅助检索 ============
+
+    def _char_entropy(self, s: str) -> float:
+        """计算字符香农熵（基于字符分布，低依赖、轻量）"""
+        if not s:
+            return 0.0
+        from math import log2
+        freq = {}
+        for ch in s:
+            freq[ch] = freq.get(ch, 0) + 1
+        n = len(s)
+        h = 0.0
+        for c in freq.values():
+            p = c / n
+            h -= p * log2(p)
+        return h
+
+    def _tokenize_simple(self, text: str):
+        """
+        简易分词：按 汉字串 / 字母数字串 / 其他 分段，返回[(start,end,token,type)]
+        type in {'han','alnum','other'}
+        """
+        spans = []
+        i = 0
+        n = len(text)
+        while i < n:
+            ch = text[i]
+            if '\u4e00' <= ch <= '\u9fff':
+                j = i + 1
+                while j < n and '\u4e00' <= text[j] <= '\u9fff':
+                    j += 1
+                spans.append((i, j, text[i:j], 'han'))
+                i = j
+            elif ch.isalnum():
+                j = i + 1
+                while j < n and text[j].isalnum():
+                    j += 1
+                spans.append((i, j, text[i:j], 'alnum'))
+                i = j
+            else:
+                spans.append((i, i+1, ch, 'other'))
+                i += 1
+        return spans
+
+    def _entropy_detect_candidates(self, text: str, valid_types: List[str]):
+        """
+        基于信息熵与启发式的敏感候选检索（低配可用）
+        返回列表：[(start,end,type,original)]
+        """
+        if not self.config.get('enable_entropy_detection', True):
+            return []
+
+        candidates = []
+        spans = self._tokenize_simple(text)
+        ent_th_cfg = self.config.get('entropy_threshold', 1.2)
+        ent_th = float(ent_th_cfg) if isinstance(ent_th_cfg, (int, float)) else 1.2
+        max_len = self.config.get('max_token_len', 32)
+
+        # 辅助：公司后缀
+        company_suffixes = ("公司","有限责任公司","股份有限公司","集团","研究院","研究所","银行","证券","保险","基金","事业部","分公司","子公司","工作室","事务所")
+
+        for (s, e, tok, ttype) in spans:
+            if len(tok) == 0 or (e - s) > max_len:
+                continue
+
+            # 公司：中文串 + 公司后缀，熵通常中等，但结构特征明显
+            if ttype == 'han' and any(tok.endswith(suf) for suf in company_suffixes):
+                if 'company' in valid_types or not valid_types:
+                    candidates.append((s, e, 'company', tok))
+                continue
+
+            # 姓名：2-3 汉字，首字常见姓氏，避免称谓
+            if ttype == 'han' and 2 <= len(tok) <= 3:
+                if tok[0] in self.common_surnames and tok not in self.minor_stopwords:
+                    # 适当要求字符熵不过低（排除重复字名）
+                    if self._char_entropy(tok) >= 0.5:
+                        if 'name' in valid_types or not valid_types:
+                            candidates.append((s, e, 'name', tok))
+                        continue
+
+            # 账号/标识：字母数字串 >= 6，字符类别多样或低熵结构数字长串
+            if ttype == 'alnum' and len(tok) >= 6:
+                h = self._char_entropy(tok)
+                # 数字占比高或熵较低（规则化号码），视为账号/标识
+                digit_ratio = sum(c.isdigit() for c in tok) / len(tok)
+                if digit_ratio > 0.6 or h < ent_th:
+                    if 'account' in valid_types or not valid_types:
+                        candidates.append((s, e, 'account', tok))
+                    continue
+
+        # 合并/去重：按位置唯一
+        candidates.sort(key=lambda x: x[0])
+        merged = []
+        last_end = -1
+        for c in candidates:
+            if c[0] >= last_end:
+                merged.append(c)
+                last_end = c[1]
+        return merged
 
     def configure(self, **kwargs):
         """
@@ -295,17 +404,55 @@ class EnhancedNamedEntityEndsideModel:
         
         valid_types = [t for t in processed_types if t in self.compiled_patterns]
         
-        # 对每种敏感信息类型进行脱敏处理
+        # 先进行信息熵/启发式候选召回，作为正则前置补充
         desensitized_text = user_input
         entity_count = 0
+
+        processed_positions = []
+
+        entropy_candidates = self._entropy_detect_candidates(user_input, valid_types)
+        # 先替换这些候选，避免后续正则被语义改写影响
+        # 从左到右处理，避免位置错乱
+        for (start, end, etype, original_text) in entropy_candidates:
+            # 跳过与已处理重叠
+            overlap = any(not (end <= ps or start >= pe) for (ps, pe) in processed_positions)
+            if overlap:
+                continue
+            # 选择占位符
+            placeholder = self.sensitive_patterns.get(etype, {'placeholder': '<entity>'})['placeholder']
+            if self.config['enable_pseudonymization']:
+                replacement = self._pseudonymize(etype, original_text)
+            elif self.config['enable_anonimization']:
+                replacement = self._anonymize(etype, original_text)
+            elif self.config['enable_generalization']:
+                # 熵候选不做粒度降低，使用占位以便还原
+                unique_id = f"{placeholder}_{entity_count}"
+                entity_count += 1
+                replacement = unique_id
+            else:
+                unique_id = f"{placeholder}_{entity_count}"
+                entity_count += 1
+                replacement = unique_id
+
+            if not (self.config['enable_pseudonymization'] or self.config['enable_anonimization']):
+                unique_id = f"{placeholder}_{entity_count - 1}"
+                self.current_mapping[unique_id] = original_text
+
+            # 执行替换并更新已处理区间（注意文本长度变化）
+            desensitized_text = desensitized_text[:start] + replacement + desensitized_text[end:]
+            new_end = start + len(replacement)
+            processed_positions.append((start, new_end))
+
+        # 对每种敏感信息类型进行脱敏处理（正则主流程）
+        # 使用 processed_positions 避免与前置候选重复
+        # 注意：下面已有代码块使用 processed_positions，我保留并复用
         
         # 按照优先级排序处理，避免嵌套匹配问题
         priority_order = ['company', 'department', 'position', 'performance', 'amount', 'email', 'phone', 'id', 'name', 'age', 'address', 'zipcode', 'ip', 'account']
         processing_order = [t for t in priority_order if t in valid_types] + [t for t in valid_types if t not in priority_order]
         
         # 用于记录已处理的位置，避免重复脱敏
-        processed_positions = []
-        
+        # processed_positions 已由熵候选阶段初始化与更新
         for type_name in processing_order:
             pattern = self.compiled_patterns[type_name]
             placeholder = self.sensitive_patterns[type_name]['placeholder']
@@ -885,11 +1032,11 @@ def user_interaction_demo():
                                 enable_generalization=True
                             )
                     
-                    # 运行工作流
-                    has_workflow.run(
-                        selected_scenario['input'], 
-                        selected_scenario['sensitive_types']
-                    )
+                    # 运行工作流（类型收敛）
+                    inp = str(selected_scenario.get('input', ''))
+                    st = selected_scenario.get('sensitive_types', None)
+                    st_norm: Optional[List[str]] = st if isinstance(st, list) else None
+                    has_workflow.run(inp, st_norm)
                 else:
                     print("无效的选择，请重新输入。\n")
                     continue
@@ -961,8 +1108,9 @@ def user_interaction_demo():
                 else:
                     sensitive_types = None  # 使用默认类型
                 
-                # 运行工作流
-                has_workflow.run(custom_text, sensitive_types)
+                # 运行工作流（类型收敛）
+                st_norm: Optional[List[str]] = sensitive_types if isinstance(sensitive_types, list) else None
+                has_workflow.run(custom_text, st_norm)
             elif choice == '3':
                 # 仅进行脱敏处理
                 print("\n===== 仅脱敏处理模式 =====")
@@ -1154,22 +1302,25 @@ def batch_test():
             has_workflow = CompleteHaSWorkflow()
             has_workflow.configure_endside_model(**config)
             
-            # 运行工作流
+            # 运行工作流（类型收敛）
+            scen_inp = str(scenario.get('input', ''))
+            scen_st = scenario.get('sensitive_types', None)
+            scen_st_norm: Optional[List[str]] = scen_st if isinstance(scen_st, list) else None
             result = has_workflow.run(
-                scenario['input'],
-                scenario['sensitive_types']
+                scen_inp,
+                scen_st_norm
             )
             
-            # 记录总耗时
-            total_times.append(result['timing']['total'])
+            # 记录总耗时（类型安全）
+            timing_dict = cast(Dict[str, Any], result.get('timing', {}))
+            total_val = timing_dict.get('total', 0.0)
+            total_times.append(float(total_val))
         
         # 计算平均耗时
         avg_time = sum(total_times) / len(total_times)
         print(f"\n配置 '{config['name']}' 的平均处理时间: {avg_time:.3f}秒")
 
+# 重构后入口瘦封装，保持向后兼容
 if __name__ == "__main__":
-    # 默认运行用户交互演示
+    from app import user_interaction_demo
     user_interaction_demo()
-    
-    # 如果需要进行批量测试，可以取消下面一行的注释
-    # batch_test()
