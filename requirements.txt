@@ -1,0 +1,21 @@
+# HaS隐私保护技术 - 增强版信息熵敏感词检索系统
+# 依赖库列表
+
+# 基础依赖
+python>=3.7
+
+# 文本处理
+re
+math
+collections
+random
+time
+os
+logging
+argparse
+
+# 可选依赖（扩展功能）
+# numpy>=1.19.0  # 如果需要更复杂的数值计算
+# pandas>=1.1.0  # 如果需要数据处理和分析
+# matplotlib>=3.3.0  # 如果需要结果可视化
+# jieba>=0.42.1  # 如果需要更精确的中文分词
