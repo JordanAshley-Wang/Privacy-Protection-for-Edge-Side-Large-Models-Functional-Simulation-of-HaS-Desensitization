@@ -1,18 +1,41 @@
 import re
 import math
 import random
+import re
 import time
 from collections import Counter, defaultdict
 
 class EntropyEnhancedSensitiveModel:
     def __init__(self):
         # 系统配置参数
+        # 控制是否启用基于信息熵的敏感信息检测机制
+        # 当设为True时，系统会计算文本的信息熵来识别潜在的敏感信息
         self.enable_entropy_detection = True
-        self.entropy_threshold = 1.2
-        self.high_entropy_threshold = 3.5
+
+        # 信息熵阈值，用于判断文本片段的熵值是否异常
+        # 低于此值的文本片段（如结构化的证件号码、银行卡号等）被认为可能包含敏感信息
+        self.entropy_threshold = 1.8  # 提高阈值，减少误判
+
+        # 高信息熵阈值，用于识别高随机性文本
+        # 高于此值的文本片段（如加密数据、随机生成的字符串等）被认为具有高度随机性，可能需要特别处理
+        self.high_entropy_threshold = 3.2  # 降低阈值，增加检测范围
+
+        # 单个令牌（待分析文本片段）的最大长度
+        # 超过此长度的文本片段将被分割处理，防止过长文本导致的性能问题
         self.max_token_len = 64
+
+        # 单个令牌（待分析文本片段）的最小长度
+        # 低于此长度的文本片段不会被单独分析，以避免误判短字符串
         self.min_token_len = 2
+
+        # 控制是否启用激进分析模式
+        # 激进分析会尝试更深入地挖掘潜在的敏感信息，但可能影响系统性能
+        # 当前设为False以优先保证系统效率
         self.enable_radical_analysis = False  # 禁用激进分析以提高效率
+
+        # 控制是否启用位置熵分析
+        # 位置熵分析用于分析文本中字符位置的规律性，有助于识别具有固定格式的敏感信息
+        # 例如身份证号中各位置字符的分布特征
         self.enable_position_entropy = True  # 启用位置熵分析
         
         # 敏感信息类型配置
@@ -94,6 +117,7 @@ class EntropyEnhancedSensitiveModel:
         
         # 生成N-gram
         ngrams = [text[i:i+n] for i in range(len(text)-n+1)]
+        
         ngram_counts = Counter(ngrams)
         total_ngrams = len(ngrams)
         
@@ -109,20 +133,29 @@ class EntropyEnhancedSensitiveModel:
         """计算位置相关的加权熵"""
         base_entropy = self._char_entropy(text)
         
-        # 应用位置权重
-        weight = 1.0
+        # 应用位置权重，使用加权平均而不是只应用第一个匹配的权重
+        total_weight = 0.0
+        weighted_sum = 0.0
+        
         for pos_type, pos_weight in self.position_weights.items():
             if pos_type in position_info:
-                weight *= pos_weight
-                break  # 只应用第一个匹配的位置权重
+                weighted_sum += pos_weight
+                total_weight += 1
         
-        return base_entropy * weight
+        # 如果没有匹配的位置类型，使用默认权重1.0
+        if total_weight == 0:
+            return base_entropy
+        
+        # 计算平均权重
+        avg_weight = weighted_sum / total_weight
+        
+        return base_entropy * avg_weight
     
     def _tokenize_simple(self, text):
         """简单分词，将文本按汉字串、字母数字串和其他字符分段"""
         # 使用正则表达式进行简单分词
-        # 匹配汉字、字母数字和其他字符
-        pattern = r'([\u4e00-\u9fa5]+)|([a-zA-Z0-9]+)|(\S)'
+        # 匹配汉字、字母数字、标点符号和其他字符
+        pattern = r'([\u4e00-\u9fa5]+)|([a-zA-Z0-9]+)|([，。！？；：""''（）【】《》]+)|([^\\s])'
         tokens = re.findall(pattern, text)
         
         # 合并匹配结果
@@ -135,6 +168,145 @@ class EntropyEnhancedSensitiveModel:
                     break
         
         return result
+    
+    def _is_chinese_name(self, text):
+        """检测是否为中文姓名"""
+        # 姓名长度通常为2-4个字符
+        if len(text) < 2 or len(text) > 4:
+            return False
+        
+        # 检查是否全是中文字符
+        if not all('\u4e00' <= char <= '\u9fff' for char in text):
+            return False
+        
+        # 检查第一个字符是否为常见姓氏
+        if text[0] not in self.COMMON_SURNAMES:
+            return False
+        
+        # 检查是否包含常见的名字用字
+        common_given_name_chars = set('伟芳娜秀英敏静强磊军洋勇艳杰丽娟涛磊玲超霞亮明燕刚桂凤菊梅兰琴莲萍红华春小淑云珍丽丽')
+        if any(char in common_given_name_chars for char in text[1:]):
+            return True
+        
+        # 如果不包含常见名字用字，但长度合适且第一个字符是常见姓氏，也可能是姓名
+        return len(text) >= 2 and len(text) <= 3
+    
+    def _is_position_or_department(self, text):
+        """检测是否为职位或部门"""
+        # 职位关键词
+        position_keywords = [
+            '经理', '总监', '总裁', '董事长', '总经理', '副总经理', '部门经理',
+            '主管', '专员', '工程师', '分析师', '顾问', '代表', '助理', '主任',
+            '副总裁', '助理总裁', '高级经理', '资深经理', '首席', 'CEO', 'CTO',
+            'CFO', 'COO', '总监助理', '副总监', '组长', '队长', '班长'
+        ]
+        
+        # 部门关键词
+        department_keywords = [
+            '部门', '部', '处', '科', '组', '室', '中心', '局', '所', '院',
+            '委员会', '办公室', '事业部', '项目部', '研发部', '市场部', '销售部',
+            '人力资源部', '财务部', '技术部', '产品部', '运营部', '客服部'
+        ]
+        
+        # 检查是否包含职位关键词
+        for keyword in position_keywords:
+            if keyword in text:
+                return 'position'
+        
+        # 检查是否包含部门关键词
+        for keyword in department_keywords:
+            if keyword in text:
+                return 'department'
+        
+        return None
+    
+    def _process_candidate(self, text, candidate_text, start_token_idx, end_token_idx, tokens, candidates):
+        """处理候选文本，判断是否为敏感信息"""
+        # 获取位置信息
+        start_idx = text.find(candidate_text)
+        end_idx = start_idx + len(candidate_text)
+        position_info = self._get_position_info(text, start_idx, end_idx)
+        
+        # 计算综合熵值
+        char_entropy = self._char_entropy(candidate_text)
+        bigram_entropy = self._ngram_entropy(candidate_text, 2)
+        trigram_entropy = self._ngram_entropy(candidate_text, 3) if len(candidate_text) >= 3 else 0
+        
+        # 综合不同粒度的熵值，根据文本长度调整权重
+        if len(candidate_text) <= 4:
+            # 短文本更依赖字符熵
+            combined_entropy = (char_entropy * 0.7 + bigram_entropy * 0.2 + trigram_entropy * 0.1)
+        elif len(candidate_text) <= 8:
+            # 中等长度文本平衡考虑
+            combined_entropy = (char_entropy * 0.5 + bigram_entropy * 0.3 + trigram_entropy * 0.2)
+        else:
+            # 长文本更依赖n-gram熵
+            combined_entropy = (char_entropy * 0.3 + bigram_entropy * 0.4 + trigram_entropy * 0.3)
+        
+        # 应用位置权重
+        if self.enable_position_entropy:
+            position_entropy = self._position_entropy(candidate_text, position_info)
+            # 混合原始熵和位置熵
+            combined_entropy = (combined_entropy * 0.7 + position_entropy * 0.3)
+        
+        # 启发式规则判断
+        is_sensitive = False
+        sensitive_type = None
+        
+        # 公司名称检测
+        if any(suffix in candidate_text for suffix in self.COMPANY_SUFFIXES):
+            is_sensitive = True
+            sensitive_type = 'company'
+        # 姓名检测 - 使用专门的姓名检测方法
+        elif self._is_chinese_name(candidate_text):
+            is_sensitive = True
+            sensitive_type = 'name'
+        # 职位和部门检测 - 使用专门的检测方法
+        position_or_dept = self._is_position_or_department(candidate_text)
+        if position_or_dept:
+            is_sensitive = True
+            sensitive_type = position_or_dept
+        # 账号/标识检测（高熵值）- 改进规则
+        elif combined_entropy > self.high_entropy_threshold and re.search(r'[a-zA-Z0-9]{6,}', candidate_text):
+            is_sensitive = True
+            sensitive_type = 'account'
+        # 低熵值文本可能包含结构化信息 - 改进规则
+        elif combined_entropy < self.entropy_threshold and len(candidate_text) >= 4:
+            # 进一步判断是否为结构化信息
+            if (re.search(r'\d+', candidate_text) and 
+                (re.search(r'[a-zA-Z]', candidate_text) or 
+                 any(char in candidate_text for char in '-_'))):
+                is_sensitive = True
+                sensitive_type = 'structured_data'
+            # 或者是常见的结构化中文文本
+            elif (len(candidate_text) >= 4 and len(candidate_text) <= 10 and 
+                  not any(char in candidate_text for char in '，。！？；：""''（）【】《》')):
+                is_sensitive = True
+                sensitive_type = 'general'
+        # 中等熵值文本检测 - 新增规则
+        elif (self.entropy_threshold <= combined_entropy <= self.high_entropy_threshold and 
+              len(candidate_text) >= 3 and len(candidate_text) <= 8):
+            # 检查是否包含特定模式
+            if (re.search(r'[0-9]+', candidate_text) and 
+                re.search(r'[a-zA-Z\u4e00-\u9fa5]+', candidate_text)):
+                is_sensitive = True
+                sensitive_type = 'mixed_content'
+            # 或者是常见的中文词组
+            elif (len(candidate_text) >= 4 and 
+                  all('\u4e00' <= char <= '\u9fff' for char in candidate_text)):
+                is_sensitive = True
+                sensitive_type = 'chinese_phrase'
+        
+        if is_sensitive:
+            candidates.append({
+                'text': candidate_text,
+                'start': start_idx,
+                'end': end_idx,
+                'entropy': combined_entropy,
+                'type': sensitive_type,
+                'token_start': start_token_idx,
+                'token_end': end_token_idx
+            })
     
     def _get_position_info(self, text, start_idx, end_idx):
         """获取文本位置信息"""
@@ -169,12 +341,29 @@ class EntropyEnhancedSensitiveModel:
         
         # 遍历所有可能的token组合作为候选
         for i in range(len(tokens)):
+            # 单个token作为候选
+            candidate_text = tokens[i]
+            if len(candidate_text) >= self.min_token_len:
+                self._process_candidate(text, candidate_text, i, i, tokens, candidates)
+            
+            # 多个token组合作为候选
             for j in range(i+1, min(i+self.max_token_len//2, len(tokens))):
+                # 跳过标点符号开头的组合
+                if tokens[i] in ['，', '。', '！', '？', '；', '：', '"', "'", '（', '）', '【', '】', '《', '》']:
+                    break
+                
                 candidate_text = ''.join(tokens[i:j+1])
                 
                 # 跳过太短的候选
                 if len(candidate_text) < self.min_token_len:
                     continue
+                
+                # 跳过包含太多标点符号的候选
+                punctuation_count = sum(1 for char in candidate_text if char in '，。！？；：""''（）【】《》')
+                if punctuation_count > len(candidate_text) * 0.3:  # 如果标点符号占比超过30%
+                    continue
+                
+                self._process_candidate(text, candidate_text, i, j, tokens, candidates)
                 
                 # 获取位置信息
                 start_idx = text.find(candidate_text)
@@ -186,12 +375,22 @@ class EntropyEnhancedSensitiveModel:
                 bigram_entropy = self._ngram_entropy(candidate_text, 2)
                 trigram_entropy = self._ngram_entropy(candidate_text, 3) if len(candidate_text) >= 3 else 0
                 
-                # 综合不同粒度的熵值
-                combined_entropy = (char_entropy * 0.5 + bigram_entropy * 0.3 + trigram_entropy * 0.2)
+                # 综合不同粒度的熵值，根据文本长度调整权重
+                if len(candidate_text) <= 4:
+                    # 短文本更依赖字符熵
+                    combined_entropy = (char_entropy * 0.7 + bigram_entropy * 0.2 + trigram_entropy * 0.1)
+                elif len(candidate_text) <= 8:
+                    # 中等长度文本平衡考虑
+                    combined_entropy = (char_entropy * 0.5 + bigram_entropy * 0.3 + trigram_entropy * 0.2)
+                else:
+                    # 长文本更依赖n-gram熵
+                    combined_entropy = (char_entropy * 0.3 + bigram_entropy * 0.4 + trigram_entropy * 0.3)
                 
                 # 应用位置权重
                 if self.enable_position_entropy:
-                    combined_entropy = self._position_entropy(candidate_text, position_info)
+                    position_entropy = self._position_entropy(candidate_text, position_info)
+                    # 混合原始熵和位置熵
+                    combined_entropy = (combined_entropy * 0.7 + position_entropy * 0.3)
                 
                 # 启发式规则判断
                 is_sensitive = False
@@ -201,18 +400,45 @@ class EntropyEnhancedSensitiveModel:
                 if any(suffix in candidate_text for suffix in self.COMPANY_SUFFIXES):
                     is_sensitive = True
                     sensitive_type = 'company'
-                # 姓名检测
-                elif len(candidate_text) >= 2 and candidate_text[0] in self.COMMON_SURNAMES:
+                # 姓名检测 - 使用专门的姓名检测方法
+                elif self._is_chinese_name(candidate_text):
                     is_sensitive = True
                     sensitive_type = 'name'
-                # 账号/标识检测（高熵值）
+                # 职位和部门检测 - 使用专门的检测方法
+                position_or_dept = self._is_position_or_department(candidate_text)
+                if position_or_dept:
+                    is_sensitive = True
+                    sensitive_type = position_or_dept
+                # 账号/标识检测（高熵值）- 改进规则
                 elif combined_entropy > self.high_entropy_threshold and re.search(r'[a-zA-Z0-9]{6,}', candidate_text):
                     is_sensitive = True
                     sensitive_type = 'account'
-                # 低熵值文本可能包含结构化信息
-                elif combined_entropy < self.entropy_threshold:
-                    is_sensitive = True
-                    sensitive_type = 'general'
+                # 低熵值文本可能包含结构化信息 - 改进规则
+                elif combined_entropy < self.entropy_threshold and len(candidate_text) >= 4:
+                    # 进一步判断是否为结构化信息
+                    if (re.search(r'\d+', candidate_text) and 
+                        (re.search(r'[a-zA-Z]', candidate_text) or 
+                         any(char in candidate_text for char in '-_'))):
+                        is_sensitive = True
+                        sensitive_type = 'structured_data'
+                    # 或者是常见的结构化中文文本
+                    elif (len(candidate_text) >= 4 and len(candidate_text) <= 10 and 
+                          not any(char in candidate_text for char in '，。！？；：""''（）【】《》')):
+                        is_sensitive = True
+                        sensitive_type = 'general'
+                # 中等熵值文本检测 - 新增规则
+                elif (self.entropy_threshold <= combined_entropy <= self.high_entropy_threshold and 
+                      len(candidate_text) >= 3 and len(candidate_text) <= 8):
+                    # 检查是否包含特定模式
+                    if (re.search(r'[0-9]+', candidate_text) and 
+                        re.search(r'[a-zA-Z\u4e00-\u9fa5]+', candidate_text)):
+                        is_sensitive = True
+                        sensitive_type = 'mixed_content'
+                    # 或者是常见的中文词组
+                    elif (len(candidate_text) >= 4 and 
+                          all('\u4e00' <= char <= '\u9fff' for char in candidate_text)):
+                        is_sensitive = True
+                        sensitive_type = 'chinese_phrase'
                 
                 if is_sensitive:
                     candidates.append({
@@ -222,6 +448,87 @@ class EntropyEnhancedSensitiveModel:
                         'entropy': combined_entropy,
                         'type': sensitive_type
                     })
+        
+        # 添加更多检测规则
+        # 邮箱检测
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        for match in re.finditer(email_pattern, text):
+            candidate_text = match.group()
+            if len(candidate_text) >= self.min_token_len:
+                candidates.append({
+                    'text': candidate_text,
+                    'start': match.start(),
+                    'end': match.end(),
+                    'entropy': self._char_entropy(candidate_text),
+                    'type': 'email',
+                    'token_start': -1,
+                    'token_end': -1
+                })
+        
+        # 电话号码检测
+        phone_patterns = [
+            r'1[3-9]\d{9}',  # 手机号
+            r'\d{3,4}-\d{7,8}',  # 座机
+            r'\(\d{3,4}\)\s*\d{7,8}'  # 带区号的座机
+        ]
+        for pattern in phone_patterns:
+            for match in re.finditer(pattern, text):
+                candidate_text = match.group()
+                if len(candidate_text) >= self.min_token_len:
+                    candidates.append({
+                        'text': candidate_text,
+                        'start': match.start(),
+                        'end': match.end(),
+                        'entropy': self._char_entropy(candidate_text),
+                        'type': 'phone',
+                        'token_start': -1,
+                        'token_end': -1
+                    })
+        
+        # 身份证号检测
+        id_pattern = r'\b[1-9]\d{5}(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b'
+        for match in re.finditer(id_pattern, text):
+            candidate_text = match.group()
+            if len(candidate_text) >= self.min_token_len:
+                candidates.append({
+                    'text': candidate_text,
+                    'start': match.start(),
+                    'end': match.end(),
+                    'entropy': self._char_entropy(candidate_text),
+                    'type': 'id_card',
+                    'token_start': -1,
+                    'token_end': -1
+                })
+        
+        # 银行卡号检测
+        bank_card_pattern = r'\b\d{16,19}\b'
+        for match in re.finditer(bank_card_pattern, text):
+            candidate_text = match.group()
+            if len(candidate_text) >= self.min_token_len:
+                candidates.append({
+                    'text': candidate_text,
+                    'start': match.start(),
+                    'end': match.end(),
+                    'entropy': self._char_entropy(candidate_text),
+                    'type': 'bank_card',
+                    'token_start': -1,
+                    'token_end': -1
+                })
+        
+        # IP地址检测
+        ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
+        for match in re.finditer(ip_pattern, text):
+            candidate_text = match.group()
+            if len(candidate_text) >= self.min_token_len:
+                candidates.append({
+                    'text': candidate_text,
+                    'start': match.start(),
+                    'end': match.end(),
+                    'entropy': self._char_entropy(candidate_text),
+                    'type': 'ip_address',
+                    'token_start': -1,
+                    'token_end': -1
+                })
         
         # 按熵值和长度排序，优先选择熵值高、长度长的候选
         candidates.sort(key=lambda x: (x['entropy'], len(x['text'])), reverse=True)
@@ -320,12 +627,18 @@ class EntropyEnhancedSensitiveModel:
     def _classify_general_sensitive(self, text):
         """对通用敏感信息进行更精确的分类"""
         # 简单的规则分类
-        if len(text) >= 2 and any(title in text for title in ('经理', '总监', '总裁', '董事长', '总经理', '副总经理', '部门经理')):
+        if len(text) >= 2 and any(title in text for title in ('经理', '总监', '总裁', '董事长', '总经理', '副总经理', '部门经理', '主管', '专员', '工程师', '分析师', '顾问', '代表')):
             return 'position'
         elif len(text) >= 2 and any(dept in text for dept in ('部门', '部', '处', '科', '组', '室')):
             return 'department'
         elif len(text) >= 4 and any(addr in text for addr in ('省', '市', '区', '县', '街道', '路', '号')):
             return 'address'
+        elif re.search(r'\d+', text) and (re.search(r'[a-zA-Z]', text) or any(char in text for char in '-_')):
+            return 'structured_data'
+        elif re.search(r'[0-9]+', text) and re.search(r'[a-zA-Z\u4e00-\u9fa5]+', text):
+            return 'mixed_content'
+        elif len(text) >= 4 and all('\u4e00' <= char <= '\u9fff' for char in text):
+            return 'chinese_phrase'
         else:
             # 默认返回general类型
             return 'general'
@@ -630,51 +943,152 @@ def user_interaction_demo():
     workflow = EntropyEnhancedHaSWorkflow()
     
     while True:
-        print("\n请选择操作：")
-        print("1. 执行完整的脱敏-处理-还原流程")
-        print("2. 仅执行脱敏处理")
-        print("3. 使用已有会话ID执行还原处理")
-        print("4. 退出")
+        print("\n--- 主菜单 ---")
+        print("1. 处理文本")
+        print("2. 处理文件")
+        print("3. 显示系统配置")
+        print("4. 退出系统")
         
-        choice = input("请输入选项 (1-4): ")
+        choice = input("请输入您的选择 (1-4): ")
         
         if choice == '1':
-            # 执行完整流程
-            user_input = input("请输入要处理的文本：")
-            result = workflow.run_complete_workflow(user_input)
+            # 处理文本
+            print("\n--- 文本处理 ---")
+            print("请选择处理模式：")
+            print("1. 脱敏处理（输入包含敏感信息的文本，输出脱敏后文本）")
+            print("2. 还原处理（输入大模型对脱敏文本的回答，输出还原敏感信息后的文本）")
+            print("3. 完整的脱敏-处理-还原流程（演示）")
             
-            print("\n=== 处理结果 ===")
-            print(f"原始文本：{result['original_text']}")
-            print(f"脱敏后：{result['desensitized_text']}")
-            print(f"大模型输出：{result['llm_output']}")
-            print(f"还原后：{result['restored_text']}")
-            print(f"识别到的敏感信息数量：{result['num_sensitive']}")
-            print(f"会话ID：{result['session_id']}")
-            print(f"处理时间：{result['processing_time']:.4f}秒")
+            mode_choice = input("请输入您的选择 (1-3): ")
             
+            if mode_choice == '1':
+                # 脱敏处理
+                user_input = input("\n请输入包含敏感信息的文本: ")
+                result = workflow.run_desensitization(user_input)
+                
+                print("\n=== 脱敏结果 ===")
+                print(f"脱敏后文本：{result['desensitized_text']}")
+                print(f"识别到的敏感信息数量：{result['num_sensitive']}")
+                print(f"会话ID：{result['session_id']}")
+                print("\n请将脱敏后文本发送给大模型，并将大模型的回答和会话ID用于还原处理。")
+                
+            elif mode_choice == '2':
+                # 还原处理
+                session_id = input("\n请输入会话ID: ")
+                llm_output = input("请输入大模型对脱敏文本的回答: ")
+                
+                result = workflow.run_restore(llm_output, session_id)
+                
+                print("\n=== 还原结果 ===")
+                print(f"还原后文本：{result['restored_text']}")
+                
+            elif mode_choice == '3':
+                # 完整流程演示
+                user_input = input("\n请输入包含敏感信息的文本: ")
+                result = workflow.run_complete_workflow(user_input)
+                
+                print("\n=== 完整流程演示结果 ===")
+                print(f"原始文本：{result['original_text']}")
+                print(f"脱敏后：{result['desensitized_text']}")
+                print(f"模拟大模型输出：{result['llm_output']}")
+                print(f"还原后：{result['restored_text']}")
+                print(f"识别到的敏感信息数量：{result['num_sensitive']}")
+                print(f"会话ID：{result['session_id']}")
+                print(f"处理时间：{result['processing_time']:.4f}秒")
+                
+            else:
+                print("无效的选项，请重新输入。")
+                
         elif choice == '2':
-            # 仅执行脱敏
-            user_input = input("请输入要脱敏的文本：")
-            result = workflow.run_desensitization(user_input)
+            # 处理文件
+            print("\n--- 文件处理 ---")
+            file_path = input("请输入文件路径: ")
             
-            print("\n=== 脱敏结果 ===")
-            print(f"脱敏后：{result['desensitized_text']}")
-            print(f"识别到的敏感信息数量：{result['num_sensitive']}")
-            print(f"会话ID：{result['session_id']}")
-            print("请保存会话ID，用于后续的还原处理。")
-            
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    file_content = f.read()
+                
+                print("请选择处理模式：")
+                print("1. 脱敏处理（输出脱敏后文件）")
+                print("2. 还原处理（输入脱敏文件的大模型回答，输出还原后文件）")
+                print("3. 完整的脱敏-处理-还原流程（演示）")
+                
+                mode_choice = input("请输入您的选择 (1-3): ")
+                
+                if mode_choice == '1':
+                    # 脱敏处理
+                    result = workflow.run_desensitization(file_content)
+                    
+                    # 保存脱敏结果到文件
+                    output_path = file_path.replace('.', '_desensitized.')
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        f.write(f"脱敏后文本：\n{result['desensitized_text']}\n\n")
+                        f.write(f"识别到的敏感信息数量：{result['num_sensitive']}\n")
+                        f.write(f"会话ID：{result['session_id']}\n")
+                    
+                    print(f"\n文件脱敏完成，结果已保存到：{output_path}")
+                    print(f"识别到的敏感信息数量：{result['num_sensitive']}")
+                    print(f"会话ID：{result['session_id']}")
+                    
+                elif mode_choice == '2':
+                    # 还原处理
+                    session_id = input("\n请输入会话ID: ")
+                    llm_output_path = input("请输入包含大模型回答的文件路径: ")
+                    
+                    try:
+                        with open(llm_output_path, 'r', encoding='utf-8') as f:
+                            llm_output = f.read()
+                        
+                        result = workflow.run_restore(llm_output, session_id)
+                        
+                        # 保存还原结果到文件
+                        output_path = llm_output_path.replace('.', '_restored.')
+                        with open(output_path, 'w', encoding='utf-8') as f:
+                            f.write(f"还原后文本：\n{result['restored_text']}\n")
+                        
+                        print(f"\n文件还原完成，结果已保存到：{output_path}")
+                    except Exception as e:
+                        print(f"读取大模型回答文件失败：{str(e)}")
+                    
+                elif mode_choice == '3':
+                    # 完整流程演示
+                    result = workflow.run_complete_workflow(file_content)
+                    
+                    # 保存结果到文件
+                    output_path = file_path.replace('.', '_complete_workflow.')
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        f.write(f"原始文本：\n{result['original_text']}\n\n")
+                        f.write(f"脱敏后：\n{result['desensitized_text']}\n\n")
+                        f.write(f"模拟大模型输出：\n{result['llm_output']}\n\n")
+                        f.write(f"还原后：\n{result['restored_text']}\n\n")
+                        f.write(f"识别到的敏感信息数量：{result['num_sensitive']}\n")
+                        f.write(f"会话ID：{result['session_id']}\n")
+                        f.write(f"处理时间：{result['processing_time']:.4f}秒\n")
+                    
+                    print(f"\n文件处理完成，结果已保存到：{output_path}")
+                    print(f"识别到的敏感信息数量：{result['num_sensitive']}")
+                    print(f"会话ID：{result['session_id']}")
+                    
+                else:
+                    print("无效的选项，请重新输入。")
+                    
+            except Exception as e:
+                print(f"文件处理失败：{str(e)}")
+                
         elif choice == '3':
-            # 执行还原
-            session_id = input("请输入会话ID：")
-            llm_output = input("请输入大模型的输出文本：")
-            
-            result = workflow.run_restore(llm_output, session_id)
-            
-            print("\n=== 还原结果 ===")
-            print(f"还原后：{result['restored_text']}")
+            # 显示系统配置
+            print("\n--- 系统配置 ---")
+            print(f"敏感信息类型：{', '.join(workflow.config['sensitive_types'])}")
+            print(f"脱敏策略：{workflow.config['desensitization_strategy']}")
+            print(f"启用信息熵检测：{workflow.config['enable_entropy_detection']}")
+            print(f"启用位置熵分析：{workflow.config['enable_position_entropy']}")
+            print(f"信息熵阈值：{workflow.endside_model.entropy_threshold}")
+            print(f"高信息熵阈值：{workflow.endside_model.high_entropy_threshold}")
+            print(f"最小令牌长度：{workflow.endside_model.min_token_len}")
+            print(f"最大令牌长度：{workflow.endside_model.max_token_len}")
             
         elif choice == '4':
-            # 退出
+            # 退出系统
             print("感谢使用，再见！")
             break
         
